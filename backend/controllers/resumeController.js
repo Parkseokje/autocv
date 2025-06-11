@@ -147,7 +147,7 @@ const uploadResume = async (req, res) => {
 };
 
 const refineResume = async (req, res) => {
-  const { operationId, section, userInput } = req.body;
+  const { operationId, section, userInput, previousMarkdown } = req.body; // previousMarkdown 추가
 
   if (!operationId || !section || !userInput) {
     console.warn(
@@ -161,14 +161,15 @@ const refineResume = async (req, res) => {
   }
 
   console.log(
-    `[Controller] refineResume 호출됨. Operation ID: ${operationId}, Section: ${section}`
+    `[Controller] refineResume 호출됨. Operation ID: ${operationId}, Section: ${section}, PreviousMarkdown Exists: ${!!previousMarkdown}`
   );
 
   try {
     const result = aiService.prepareForRefinement(
       operationId,
       section,
-      userInput
+      userInput,
+      previousMarkdown // previousMarkdown 전달
     );
     console.log(
       `[Controller] refineResume: aiService.prepareForRefinement 결과:`,

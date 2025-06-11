@@ -1,7 +1,10 @@
 const { v4: uuidv4 } = require("uuid");
 const { analyzeResumeWithVertexAIStream } = require("../vertexAIHandler");
+const { db } = require("../db/index"); // db import 추가
+const { resumesTable } = require("../db/schema"); // resumesTable import 추가
+const { eq } = require("drizzle-orm"); // eq import 추가
 
-// operationId -> { stream?: VertexAIStream, response?: ExpressResponse, requestData?: any, sseStarted?: boolean, abortController?: AbortController, refinementDetails?: { section: string, userInput: string } | null }
+// operationId -> { stream?: VertexAIStream, response?: ExpressResponse, requestData?: any, sseStarted?: boolean, abortController?: AbortController, refinementDetails?: { section: string, userInput: string, previousMarkdown?: string } | null }
 const activeConnections = new Map();
 
 const initiateAnalysisOperation = (initialData) => {
@@ -24,9 +27,10 @@ const getStoredAnalysisData = (operationId) => {
   return connection?.requestData || null;
 };
 
-const prepareForRefinement = (operationId, section, userInput) => {
-  if (!operationId || !section || !userInput) {
-    console.warn(`[${operationId}] AI 서비스: prepareForRefinement - 필수 파라미터 누락.`);
+const prepareForRefinement = (operationId, section, userInput, previousMarkdown) => { // previousMarkdown 인자 추가
+  // previousMarkdown은 없을 수도 있으므로, userInput까지만 필수 체크
+  if (!operationId || !section || !userInput) { 
+    console.warn(`[${operationId}] AI 서비스: prepareForRefinement - 필수 파라미터 누락 (operationId, section, userInput).`);
     return { success: false, message: "operationId, section, userInput은 필수입니다.", status: 400 };
   }
 
@@ -36,8 +40,8 @@ const prepareForRefinement = (operationId, section, userInput) => {
     return { success: false, message: "활성 분석 세션을 찾을 수 없습니다.", status: 404 };
   }
 
-  console.log(`[${operationId}] AI 서비스: 개선 요청 준비 시작. Section: ${section}, UserInput: ${userInput}`);
-  connection.refinementDetails = { section, userInput };
+  console.log(`[${operationId}] AI 서비스: 개선 요청 준비 시작. Section: ${section}, UserInput: ${userInput}, PreviousMarkdown provided: ${!!previousMarkdown}`);
+  connection.refinementDetails = { section, userInput, previousMarkdown }; // previousMarkdown 추가
 
   // 현재 진행 중인 스트림이 있다면 중단
   if (connection.abortController && !connection.abortController.signal.aborted) {
@@ -227,7 +231,7 @@ async function processAndStreamVertexResponse(vertexStream, res, operationId) {
 }
 
 // 최종 분석 결과 파싱 및 전송 함수
-function parseAndFinalizeAnalysis(fullResponseText, res, operationId) {
+async function parseAndFinalizeAnalysis(fullResponseText, res, operationId) { // async 추가
   // AI가 생성한 전체 응답 텍스트 로깅
   console.log(`[${operationId}] AI 서비스: Vertex AI fullResponseText (before regex):\n---\n${fullResponseText}\n---`);
 
@@ -254,7 +258,31 @@ function parseAndFinalizeAnalysis(fullResponseText, res, operationId) {
   }
   
   if (finalAnalysisData && !res.writableEnded) {
-      res.write(`event: complete\ndata: ${JSON.stringify({ analysis: finalAnalysisData, operationId: operationId })}\n\n`);
+    // DB에 generatedMarkdown 업데이트 시도
+    if (finalAnalysisData.suggestedResumeMarkdown && operationId) {
+      try {
+        await db.update(resumesTable) // await 사용
+          .set({ 
+            generatedMarkdown: finalAnalysisData.suggestedResumeMarkdown,
+            status: 'completed', // 상태도 'completed'로 업데이트
+            updatedAt: new Date(),
+          })
+          .where(eq(resumesTable.id, operationId));
+        console.log(`[${operationId}] AI 서비스: generatedMarkdown 및 상태 DB 업데이트 완료.`);
+      } catch (dbError) {
+        console.error(`[${operationId}] AI 서비스: generatedMarkdown DB 업데이트 중 오류:`, dbError);
+        // DB 업데이트 실패가 전체 프로세스를 중단시켜서는 안 되므로, 오류 로깅 후 계속 진행
+      }
+    }
+
+    res.write(`event: complete\ndata: ${JSON.stringify({ analysis: finalAnalysisData, operationId: operationId })}\n\n`);
+    // 성공적으로 complete 이벤트 전송 후 refinementDetails 초기화 (이 로직은 parseAndFinalizeAnalysis의 다른 부분에서 이미 처리됨)
+    const connection = activeConnections.get(operationId);
+    if (connection && connection.refinementDetails) { // refinementDetails가 있을 때만 초기화
+        connection.refinementDetails = null;
+        activeConnections.set(operationId, connection);
+        console.log(`[${operationId}] AI 서비스: refinementDetails 초기화 완료 (parseAndFinalizeAnalysis).`);
+    }
   }
 }
 

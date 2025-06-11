@@ -68,12 +68,32 @@ async function analyzeResumeWithVertexAIStream(
   ) {
     // 개선 요청이 있을 경우의 프롬프트
     console.log(
-      `[VertexAIHandler] 개선 요청 감지: Section: ${refinementDetails.section}, Input: ${refinementDetails.userInput}`
+      `[VertexAIHandler] 개선 요청 감지: Section: ${refinementDetails.section}, Input: ${refinementDetails.userInput}, PreviousMarkdown Exists: ${!!refinementDetails.previousMarkdown}`
     );
-    prompt = `당신은 최고의 커리어 컨설턴트이자 이력서 개선 전문가입니다. 다음은 사용자의 원본 이력서, 채용 공고(있을 경우), 그리고 특정 섹션에 대한 사용자의 개선 요청입니다.
 
-주어진 정보를 바탕으로, 사용자의 개선 요청을 최우선으로 반영하여 전체 이력서 분석 결과를 JSON 형식으로 다시 생성해주세요.
+    let previousMarkdownText = "";
+    if (
+      refinementDetails.previousMarkdown &&
+      typeof refinementDetails.previousMarkdown === "string" &&
+      refinementDetails.previousMarkdown.trim() !== ""
+    ) {
+      previousMarkdownText = `
+
+3. 이전 AI 추천 이력서 내용 (참고용):
+\`\`\`
+${refinementDetails.previousMarkdown}
+\`\`\``;
+    }
+
+    prompt = `당신은 최고의 커리어 컨설턴트이자 이력서 개선 전문가입니다. 다음은 사용자의 원본 이력서, 채용 공고(있을 경우), ${previousMarkdownText
+      ? "이전에 AI가 생성했던 추천 이력서 내용,"
+      : ""} 그리고 특정 섹션에 대한 사용자의 개선 요청입니다.
+
+주어진 모든 정보를 종합적으로 고려하여, 사용자의 개선 요청을 최우선으로 반영하여 전체 이력서 분석 결과를 JSON 형식으로 다시 생성해주세요.
 특히, 사용자가 개선을 요청한 "${refinementDetails.section}" 섹션의 내용을 사용자의 구체적인 요청사항 ("${refinementDetails.userInput}")에 맞춰 수정하고 발전시켜야 합니다.
+${previousMarkdownText
+      ? "이때, 이전에 AI가 생성했던 추천 이력서 내용을 참고하여, 그 내용을 바탕으로 개선하거나 필요한 부분을 수정할 수 있습니다."
+      : "원본 이력서를 바탕으로 개선 요청을 적용해주세요."}
 다른 섹션들(summary, skills, strengths, improvementSuggestions, suggestedResumeMarkdown의 다른 부분)도 이 개선 요청의 맥락에 맞게 필요하다면 함께 업데이트될 수 있습니다.
 최종 목표는 사용자의 개선 요청을 만족시키면서 채용 공고에 더욱 최적화된, 완성도 높은 이력서 분석 결과를 제공하는 것입니다.
 
@@ -85,8 +105,9 @@ ${resumeText}
 ${jobPostingText && jobPostingText.trim() !== ""
       ? `2. 채용공고 내용:\n\`\`\`\n${jobPostingText}\n\`\`\``
       : "2. 채용공고 내용: 제공되지 않음."}
+${previousMarkdownText}
 
-3. 사용자 개선 요청:
+${previousMarkdownText ? "4" : "3"}. 사용자 개선 요청:
    - 대상 섹션: "${refinementDetails.section}"
    - 요청 내용: "${refinementDetails.userInput}"
 
