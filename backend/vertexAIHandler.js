@@ -1,6 +1,7 @@
 require("dotenv").config(); // .env 파일 로드
 
 const { GoogleGenAI } = require("@google/genai");
+const logger = require("./utils/logger");
 // Vertex AI 클라이언트 초기화 설정
 const projectId = process.env.GCP_PROJECT_ID;
 const location = process.env.GCP_LOCATION;
@@ -16,7 +17,7 @@ try {
     );
   }
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.warn(
+    logger.warn(
       "GOOGLE_APPLICATION_CREDENTIALS 환경 변수가 설정되지 않았습니다. Vertex AI 인증에 실패할 수 있습니다."
     );
   }
@@ -26,11 +27,11 @@ try {
     project: projectId,
     location: location
   });
-  console.log(
+  logger.info(
     `GoogleGenAI 인스턴스가 성공적으로 초기화되었습니다. (프로젝트: ${projectId}, 위치: ${location}, 모델 ID: ${modelId})`
   );
 } catch (initError) {
-  console.error("GoogleGenAI 인스턴스 초기화 오류:", initError.message, initError.stack);
+  logger.error("GoogleGenAI 인스턴스 초기화 오류:", initError.message, initError.stack);
   genAIInstance = null;
 }
 
@@ -67,7 +68,7 @@ async function analyzeResumeWithVertexAIStream(
     refinementDetails.userInput
   ) {
     // 개선 요청이 있을 경우의 프롬프트
-    console.log(
+    logger.info(
       `[VertexAIHandler] 개선 요청 감지: Section: ${refinementDetails.section}, Input: ${refinementDetails.userInput}, PreviousMarkdown Exists: ${!!refinementDetails.previousMarkdown}`
     );
 
@@ -229,7 +230,7 @@ ${commonOutputInstruction}
 
   let streamResult;
   try {
-    console.log(`Vertex AI(@google/genai)에 스트리밍 요청 전송 중 (모델: ${modelId})...`);
+    logger.info(`Vertex AI(@google/genai)에 스트리밍 요청 전송 중 (모델: ${modelId})...`);
     const generationConfigParams = {
       temperature: 0.1, // 일관성을 위해 temperature 값을 낮춤
       // maxOutputTokens: 8192, // 사용자 요청으로 제거
@@ -264,10 +265,10 @@ ${commonOutputInstruction}
       }
     });
 
-    console.log("Vertex AI(@google/genai)로부터 스트림 객체 받음. 호출자에게 반환합니다.");
+    logger.info("Vertex AI(@google/genai)로부터 스트림 객체 받음. 호출자에게 반환합니다.");
     return streamResult;
   } catch (error) {
-    console.error("analyzeResumeWithVertexAIStream 함수 내 최종 오류 처리:", error);
+    logger.error("analyzeResumeWithVertexAIStream 함수 내 최종 오류 처리:", error);
     const errorMessage = error.message || "알 수 없는 오류";
     throw new Error(
       `Vertex AI(@google/genai) API 스트리밍 처리 중 오류가 발생했습니다: ${errorMessage}`

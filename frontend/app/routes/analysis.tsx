@@ -1,11 +1,14 @@
 import type { MetaFunction } from "@remix-run/node"; 
 import { Link, useBlocker } from "@remix-run/react"; 
-import { useState, useEffect, useRef } from "react";
-import ReactMarkdown from 'react-markdown'; // ReactMarkdown import
-import remarkGfm from 'remark-gfm'; // remarkGfm import
+import { useState, useEffect, useRef, useCallback } from "react"; // useCallback 추가
+import ReactMarkdown from 'react-markdown'; 
+import remarkGfm from 'remark-gfm'; 
 import ResumeAnalysisForm from "~/components/ResumeAnalysisForm";
 import AnalysisResultDisplay from "~/components/AnalysisResultDisplay";
 import FeedbackForm from "~/components/FeedbackForm";
+import { useAnalysisStream, type AnalysisResult, type SSEEventData } from '~/hooks/useAnalysisStream'; // 커스텀 훅 및 타입 import
+import logger from "~/utils/logger";
+import { sendCancelRequestToBackend, handleSubmitAnalysis, handleRefineAnalysisRequest } from '~/utils/apiUtils'; // handleRefineAnalysisRequest import 추가
 
 export const meta: MetaFunction = () => {
   return [
@@ -14,104 +17,64 @@ export const meta: MetaFunction = () => {
   ];
 };
 
-interface AnalysisResult {
-  summary?: string;
-  skills?: string[];
-  strengths?: string[];
-  improvementSuggestions?: string[];
-  suggestedResumeMarkdown?: string;
-}
-
-interface InitialResponseData {
-  success?: boolean;
-  operationId?: string;
-  fileName?: string;
-  error?: string;
-}
-
-interface SSEEventData {
-  chunk?: string; 
-  analysis?: AnalysisResult; 
-  error?: string; 
-  message?: string; 
-  operationId?: string; 
-}
-
-
+/**
+ * AI 이력서 분석 페이지 컴포넌트입니다.
+ * 파일 업로드, SSE를 통한 실시간 분석 결과 수신, 피드백 기반 개선 요청 기능을 제공합니다.
+ */
 export default function AnalysisPage() {
   const [isLoading, setIsLoading] = useState(false);
-  const [isRefining, setIsRefining] = useState(false); // isRefining 상태 추가
-  const [streamedContent, setStreamedContent] = useState<string>(""); 
+  const [isRefining, setIsRefining] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  // const [dbRecordId, setDbRecordId] = useState<number | null>(null); // 현재 사용되지 않음
   const [userFeedback, setUserFeedback] = useState("");
-  const [dbRecordId, setDbRecordId] = useState<number | null>(null); 
   const [currentJobPostingUrl, setCurrentJobPostingUrl] = useState<string>("");
   const [currentOperationId, setCurrentOperationId] = useState<string | null>(null);
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const hasConfirmedNavigationRef = useRef(false); 
   const currentOperationIdRef = useRef(currentOperationId);
-  const isLoadingRef = useRef(isLoading); // isLoading 상태를 위한 ref
-  const isRefiningRef = useRef(isRefining); // isRefining 상태를 위한 ref
+  const isLoadingRef = useRef(isLoading);
+  const isRefiningRef = useRef(isRefining);
 
   useEffect(() => {
     isRefiningRef.current = isRefining;
-    console.log(`[DEBUG] isRefiningRef updated to: ${isRefining}`);
+    logger.debug(`[DEBUG] isRefiningRef updated to: ${isRefining}`);
   }, [isRefining]);
 
   useEffect(() => {
     currentOperationIdRef.current = currentOperationId;
-    console.log(`[DEBUG] currentOperationIdRef updated to: ${currentOperationId}`);
+    logger.debug(`[DEBUG] currentOperationIdRef updated to: ${currentOperationId}`);
   }, [currentOperationId]);
 
   useEffect(() => {
     isLoadingRef.current = isLoading;
-    console.log(`[DEBUG] isLoadingRef updated to: ${isLoading}`);
+    logger.debug(`[DEBUG] isLoadingRef updated to: ${isLoading}`);
   }, [isLoading]);
 
-  const sendCancelRequestToBackend = async (operationId: string | null) => {
-    if (!operationId) {
-      console.log("[DEBUG] sendCancelRequestToBackend: No operationId to cancel (it's null or undefined).");
-      return;
-    }
-    if (operationId !== currentOperationIdRef.current && currentOperationIdRef.current !== null) {
-        // console.log(`[DEBUG] sendCancelRequestToBackend: OpId ${operationId} does not match currentOpIdRef ${currentOperationIdRef.current}. Not sending.`);
-        // return; 
-    }
-    console.log(`[DEBUG] Attempting to send cancel request for operationId: ${operationId}`);
-    try {
-      const response = await fetch("http://localhost:3001/api/cancel-operation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operationId }),
-        keepalive: true, 
-      });
-      console.log(`[DEBUG] Sent cancel request for operationId: ${operationId}. Status: ${response.status}`);
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`[DEBUG] Cancel request failed for ${operationId}. Status: ${response.status}`, errorData);
-      }
-    } catch (e) {
-      console.error(`[DEBUG] Error sending cancel request for operationId: ${operationId}`, e);
-    }
-  };
-  
+  // 페이지 이탈 시 작업 취소 로직
   useEffect(() => {
     const handleActualPageUnload = () => {
       if (isLoadingRef.current && currentOperationIdRef.current && !hasConfirmedNavigationRef.current) {
-        console.log(`[DEBUG] 'pagehide' event: Sending cancel for OpId ${currentOperationIdRef.current}. isLoadingRef: ${isLoadingRef.current}, confirmedNav: ${hasConfirmedNavigationRef.current}`);
+        logger.debug(`[DEBUG] 'pagehide' event: Sending cancel for OpId ${currentOperationIdRef.current}.`);
         sendCancelRequestToBackend(currentOperationIdRef.current);
       }
     };
     window.addEventListener('pagehide', handleActualPageUnload);
     return () => {
-      console.log(`[DEBUG] Cleanup for 'pagehide' useEffect. Current OpId at cleanup: ${currentOperationIdRef.current}`);
+      logger.debug(`[DEBUG] Cleanup for 'pagehide' useEffect. Current OpId at cleanup: ${currentOperationIdRef.current}`);
       window.removeEventListener('pagehide', handleActualPageUnload);
     };
-  }, []);
+  }, [sendCancelRequestToBackend]);
 
+  /**
+   * Remix의 `useBlocker`를 사용하여, 분석 작업(isLoadingRef.current가 true)이 진행 중이고
+   * 사용자가 페이지를 이탈하려고 할 때 확인 대화 상자를 표시합니다.
+   * 사용자가 이탈을 확인하면, 현재 진행 중인 EventSource 연결을 닫고 백엔드에 작업 취소를 요청한 후 페이지 이동을 허용합니다.
+   * 사용자가 이탈을 취소하면, blocker 상태를 리셋합니다.
+   * `hasConfirmedNavigationRef`를 사용하여 사용자가 이미 이탈을 확인한 경우에는 blocker가 다시 활성화되지 않도록 합니다.
+   */
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       isLoadingRef.current && 
@@ -122,12 +85,12 @@ export default function AnalysisPage() {
 
   useEffect(() => {
     if (blocker && blocker.state === "blocked") {
-      console.log(`[DEBUG] Blocker activated. OpId: ${currentOperationIdRef.current}, Blocker state: ${blocker.state}`);
+      logger.debug(`[DEBUG] Blocker activated. OpId: ${currentOperationIdRef.current}, Blocker state: ${blocker.state}`);
       if (confirm("분석이 진행 중입니다. 정말 페이지를 벗어나시겠습니까?")) {
-        console.log(`[DEBUG] Blocker: User confirmed navigation for OpId: ${currentOperationIdRef.current}`);
+        logger.debug(`[DEBUG] Blocker: User confirmed navigation for OpId: ${currentOperationIdRef.current}`);
         hasConfirmedNavigationRef.current = true; 
         if (eventSourceRef.current) {
-            console.log(`[DEBUG] Blocker: Closing EventSource for OpId: ${currentOperationIdRef.current}`);
+            logger.debug(`[DEBUG] Blocker: Closing EventSource for OpId: ${currentOperationIdRef.current}`);
             eventSourceRef.current.close();
             eventSourceRef.current = null; 
         }
@@ -136,233 +99,127 @@ export default function AnalysisPage() {
         }
         blocker.proceed();
       } else {
-        console.log(`[DEBUG] Blocker: User cancelled navigation for OpId: ${currentOperationIdRef.current}`);
+        logger.debug(`[DEBUG] Blocker: User cancelled navigation for OpId: ${currentOperationIdRef.current}`);
         blocker.reset();
       }
     }
-  }, [blocker]); 
+  }, [blocker, sendCancelRequestToBackend]); 
 
-  useEffect(() => {
-    let es: EventSource | null = null;
-    const operationIdForEffect = currentOperationId; 
+  /**
+   * SSE 연결이 성공적으로 열렸을 때 호출되는 콜백 함수입니다.
+   * 현재 작업 ID와 함께 연결 성공 로그를 기록합니다.
+   */
+  const handleSSEOpen = useCallback(() => {
+    logger.info(`[AnalysisPage] SSE connection opened for opId: ${currentOperationIdRef.current}.`);
+  }, []);
 
-    if (operationIdForEffect && isLoading) {
-      console.log(`[DEBUG] EventSource useEffect: Creating EventSource for OpId: ${operationIdForEffect}`);
-      const sseUrl = `http://localhost:3001/api/stream-analysis?operationId=${operationIdForEffect}`;
-      es = new EventSource(sseUrl);
-      eventSourceRef.current = es;
-      console.log(`[DEBUG] EventSource useEffect: EventSource object created and ref SET for OpId: ${operationIdForEffect}`);
-
-      es.onopen = () => {
-        console.log(`[Frontend] SSE connection opened for operationId: ${operationIdForEffect}. EventSource readyState: ${es?.readyState}`);
-      };
-
-      es.onmessage = (event) => {
-        try {
-          const eventData: SSEEventData = JSON.parse(event.data);
-          if (eventData.chunk) {
-            setAnalysisResult((prev) => {
-              const newMarkdown = (prev?.suggestedResumeMarkdown || "") + eventData.chunk;
-              if (prev === null && isLoading && !isRefining) {
-                return { suggestedResumeMarkdown: newMarkdown };
-              }
-              if (prev === null && isRefining) {
-                 return { suggestedResumeMarkdown: newMarkdown };
-              }
-              return {
-                ...prev,
-                suggestedResumeMarkdown: newMarkdown,
-              };
-            });
-          }
-        } catch (e) {
-          console.error("[Frontend] Error parsing SSE message data:", e, "Raw data:", event.data);
+  /**
+   * SSE를 통해 메시지(분석 결과의 청크)가 수신될 때마다 호출되는 콜백 함수입니다.
+   * 수신된 청크를 기존 `analysisResult.suggestedResumeMarkdown`에 추가하여 상태를 업데이트합니다.
+   * @param eventData - {@link SSEEventData} 타입의 객체. `chunk` 필드에 스트리밍된 텍스트 조각이 포함됩니다.
+   */
+  const handleSSEMessage = useCallback((eventData: SSEEventData) => {
+    if (eventData.chunk) {
+      setAnalysisResult((prev) => {
+        const newMarkdown = (prev?.suggestedResumeMarkdown || "") + eventData.chunk;
+        if (prev === null) { // 스트리밍 시작 시점
+          return { suggestedResumeMarkdown: newMarkdown };
         }
-      };
-      
-      es.addEventListener('complete', (event) => {
-        const rawData = (event as MessageEvent).data;
-        console.log(`[Frontend] SSE event 'complete' for opId ${operationIdForEffect}. Data:`, rawData);
-        try {
-          const eventData: SSEEventData = JSON.parse(rawData);
-          if (eventData.analysis) {
-            setAnalysisResult(eventData.analysis);
-            setStreamedContent(""); 
-          } else if (eventData.error) {
-            setError(eventData.error);
-          }
-        } catch (e) {
-          console.error("[Frontend] Error parsing 'complete' event data:", e, "Raw data:", rawData);
-          setError("분석 완료 데이터 처리 중 오류가 발생했습니다.");
-        }
-        setIsLoading(false);
-        setIsRefining(false); 
-        es?.close();
-        eventSourceRef.current = null;
-        console.log(`[DEBUG] EventSource closed on 'complete' for opId ${operationIdForEffect}. CurrentOperationId is RETAINED for potential refinement.`);
+        return { ...prev, suggestedResumeMarkdown: newMarkdown };
       });
-
-      es.onerror = (errorEvent) => {
-        console.error(`[Frontend] EventSource encountered an error for opId ${operationIdForEffect}:`, errorEvent);
-        let message = "SSE connection error.";
-        if (errorEvent.target && (errorEvent.target as EventSource).readyState === EventSource.CLOSED) {
-            message = `SSE connection was closed. ReadyState: ${(errorEvent.target as EventSource).readyState}`;
-        } else if (errorEvent.target && (errorEvent.target as EventSource).readyState === EventSource.CONNECTING) {
-            message = `SSE connection failed to open. ReadyState: ${(errorEvent.target as EventSource).readyState}`;
-        }
-        setError(message);
-        setIsLoading(false);
-        setIsRefining(false); 
-        setCurrentOperationId(null); 
-        es?.close(); 
-        eventSourceRef.current = null;
-        console.log(`[DEBUG] EventSource closed on 'error' for opId ${operationIdForEffect}`);
-      };
     }
+  }, []);
 
-    return () => {
-      const opIdAtCleanup = operationIdForEffect; 
-      console.log(`[DEBUG] EventSource useEffect CLEANUP for OpId: ${opIdAtCleanup}. Current isLoadingRef: ${isLoadingRef.current}, confirmedNav: ${hasConfirmedNavigationRef.current}, currentOpIdRef: ${currentOperationIdRef.current}`);
-      if (es) {
-        console.log(`[DEBUG] EventSource useEffect CLEANUP: Closing 'es' instance for ${opIdAtCleanup}`);
-        es.close();
-      }
-      if (eventSourceRef.current && eventSourceRef.current === es) {
-         eventSourceRef.current = null;
-      }
-      let logMessage = `[DEBUG] EventSource useEffect CLEANUP for OpId ${opIdAtCleanup}. Conditions for cancel (would have been):`;
-      logMessage += ` isLoadingRef: ${isLoadingRef.current}, confirmedNav: ${hasConfirmedNavigationRef.current}, isRefiningRef: ${isRefiningRef.current}, currentOpIdRef: ${currentOperationIdRef.current}`;
-      console.log(logMessage);
-    };
-  }, [currentOperationId, isLoading]); 
-
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); 
-    
-    if (eventSourceRef.current) {
-        console.log(`[DEBUG] handleSubmit: Closing existing EventSource (url: ${eventSourceRef.current.url}) for previous OpId ${currentOperationIdRef.current} before new submission.`);
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+  const handleSSEComplete = useCallback((eventData: SSEEventData) => {
+    logger.info(`[AnalysisPage] SSE event 'complete' for opId ${currentOperationIdRef.current}. Data:`, eventData);
+    if (eventData.analysis) {
+      setAnalysisResult(eventData.analysis);
+    } else if (eventData.error) {
+      setError(eventData.error);
     }
-    if (currentOperationIdRef.current && isLoadingRef.current) { 
-        console.log(`[DEBUG] handleSubmit: Sending cancel for previous active OpId ${currentOperationIdRef.current} before new submission.`);
-        sendCancelRequestToBackend(currentOperationIdRef.current);
-    }
-    
-    const formElement = event.currentTarget;
-    const formData = new FormData(formElement);
-    const fileInput = formElement.querySelector('input[type="file"]') as HTMLInputElement;
-    
-    if (fileInput && fileInput.files && fileInput.files.length > 0) {
-        const file = fileInput.files[0];
-        formData.append('encodedFileName', encodeURIComponent(file.name)); 
-        console.log(`[DEBUG] handleSubmit: Appended encodedFileName: ${encodeURIComponent(file.name)}`);
-    }
+    setIsLoading(false);
+    setIsRefining(false); 
+    // EventSource 닫기는 useAnalysisStream 훅 내부에서 처리
+    logger.info(`[AnalysisPage] SSE 'complete'. CurrentOperationId RETAINED for potential refinement.`);
+  }, []);
 
-    const displayUrl = formData.get("jobPostingUrl") as string;
-    
-    setCurrentJobPostingUrl(displayUrl || "");
-    setStreamedContent(""); 
-    setAnalysisResult(null);
-    setError(null);
-    setFileName(null); 
-    setDbRecordId(null);
-    setUserFeedback("");
-    hasConfirmedNavigationRef.current = false; 
-    
-    setIsLoading(true); 
+  const handleSSEError = useCallback((error: any, operationIdOnError: string | null) => {
+    logger.error(`[AnalysisPage] EventSource encountered an error for opId ${operationIdOnError}:`, error);
+    setError(error.message || "SSE connection error.");
+    setIsLoading(false);
+    setIsRefining(false); 
+    setCurrentOperationId(null); // 오류 발생 시 operationId 초기화
+    // EventSource 닫기는 useAnalysisStream 훅 내부에서 처리
+    logger.info(`[AnalysisPage] SSE 'error'. OpId ${operationIdOnError} closed.`);
+  }, []);
 
-    try {
-      const initResponse = await fetch("http://localhost:3001/api/initiate-analysis", {
-        method: "POST",
-        body: formData,
-      });
+  // useAnalysisStream 훅 사용
+  /**
+   * `useAnalysisStream` 커스텀 훅을 사용하여 SSE 연결 및 이벤트 처리를 관리합니다.
+   * - `operationId`, `isLoading`, `isRefining` 상태를 전달하여 훅의 동작을 제어합니다.
+   * - SSE 이벤트 발생 시 호출될 콜백 함수들(`handleSSEOpen`, `handleSSEMessage`, `handleSSEComplete`, `handleSSEError`)을 전달합니다.
+   * - `eventSourceRef`를 전달하여 훅 내부에서 EventSource 인스턴스를 관리할 수 있도록 합니다.
+   */
+  useAnalysisStream({
+    operationId: currentOperationId,
+    isLoading,
+    isRefining,
+    onOpen: handleSSEOpen,
+    onMessage: handleSSEMessage,
+    onComplete: handleSSEComplete,
+    onError: handleSSEError,
+    eventSourceRef,
+  });
 
-      const initData: InitialResponseData = await initResponse.json();
-
-      if (!initResponse.ok || !initData.success || !initData.operationId) {
-        console.error("[Frontend] Initiate analysis failed:", initData);
-        setError(initData.error || "Failed to initiate analysis.");
-        setIsLoading(false);
-        setCurrentOperationId(null); 
-        return;
-      }
-      
-      console.log(`[DEBUG] handleSubmit: initData.operationId received: ${initData.operationId}.`);
-      setFileName(initData.fileName || null); 
-      setCurrentOperationId(initData.operationId); 
-      console.log(`[Frontend] Analysis initiated. New Operation ID: ${initData.operationId}. isLoading is now true.`);
-
-    } catch (err: any) {
-      console.error('[Frontend] Error in handleSubmit (initiate-analysis call):', err);
-      setError(typeof err === 'string' ? err : err.error || err.message || "분석 시작 중 오류가 발생했습니다.");
-      setIsLoading(false);
-      setCurrentOperationId(null); 
-    } 
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    handleSubmitAnalysis({
+      event,
+      eventSourceRef,
+      currentOperationIdRef,
+      isLoadingRef,
+      sendCancelRequestToBackend,
+      setCurrentJobPostingUrl,
+      setAnalysisResult,
+      setError,
+      setFileName,
+      setUserFeedback,
+      // setHasConfirmedNavigation: (confirmed: boolean) => { hasConfirmedNavigationRef.current = confirmed; }, // 이 부분은 handleSubmitAnalysis 내부에서 직접 관리하지 않으므로, AnalysisPage에서 관리
+      setIsLoading,
+      setIsRefining,
+      setCurrentOperationId,
+    });
+    // handleSubmitAnalysis 내부에서 hasConfirmedNavigationRef.current = false; 와 유사한 로직이 필요하면 추가
+    hasConfirmedNavigationRef.current = false;
   };
 
+  /**
+   * 사용자가 피드백 텍스트 영역의 내용을 변경할 때 호출되는 콜백 함수입니다.
+   * 입력된 값으로 `userFeedback` 상태를 업데이트합니다.
+   * @param event - {@link React.ChangeEvent<HTMLTextAreaElement>} 타입의 이벤트 객체.
+   */
   const handleFeedbackChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setUserFeedback(event.target.value);
   };
 
-  const handleRefineRequest = async () => {
-    console.log("[DEBUG] handleRefineRequest called"); 
-    if (!currentOperationIdRef.current) {
-      console.log("[DEBUG] handleRefineRequest: No currentOperationIdRef.current, returning.");
-      setError("현재 진행 중인 분석 작업이 없어 개선 요청을 보낼 수 없습니다. 먼저 분석을 시작해주세요.");
-      return;
-    }
-    if (!userFeedback.trim()) {
-      console.log("[DEBUG] handleRefineRequest: userFeedback is empty, returning.");
-      setError("피드백 또는 추가 요청사항을 입력해주세요.");
-      return;
-    }
-
-    console.log(`[DEBUG] handleRefineRequest: Initiating refinement for OpId ${currentOperationIdRef.current} with feedback: ${userFeedback}`);
-    
-    if (eventSourceRef.current) {
-      console.log(`[DEBUG] handleRefineRequest: Closing existing EventSource before sending refine request for OpId ${currentOperationIdRef.current}`);
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-    
-    setError(null);
-    setStreamedContent(""); 
-    setAnalysisResult(null);  
-    setIsRefining(true); 
-    setIsLoading(true); 
-    hasConfirmedNavigationRef.current = false; 
-
-    try {
-      const refinePrepareResponse = await fetch("http://localhost:3001/api/refine-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operationId: currentOperationIdRef.current,
-          section: "suggestedResumeMarkdown", 
-          userInput: userFeedback,
-          previousMarkdown: analysisResult?.suggestedResumeMarkdown || "", 
-        }),
-      });
-
-      const prepareData = await refinePrepareResponse.json();
-
-      if (!refinePrepareResponse.ok || !prepareData.success) {
-        console.error("[Frontend] Refine prepare request failed:", prepareData);
-        setError(prepareData.message || "개선 요청 준비에 실패했습니다.");
-        setIsLoading(false);
-        setIsRefining(false);
-        return;
-      }
-
-      console.log(`[DEBUG] handleRefineRequest: Refine prepare request successful for OpId ${currentOperationIdRef.current}. Message: ${prepareData.message}`);
-    } catch (err: any) {
-      console.error('[Frontend] Error in handleRefineRequest (refine-analysis call):', err);
-      setError(err.message || "개선 요청 중 오류가 발생했습니다.");
-      setIsLoading(false);
-      setIsRefining(false);
-    }
+  /**
+   * "개선 요청" 버튼 클릭 시 호출되는 핸들러 함수입니다.
+   * `handleRefineAnalysisRequest` 유틸리티 함수를 호출하여 실제 개선 요청 로직을 수행합니다.
+   * 이 함수는 `analysisResult`와 같은 현재 컴포넌트의 상태를 `handleRefineAnalysisRequest`에 전달합니다.
+   * 또한, 개선 요청 후에는 페이지 이탈 방지 로직을 위해 `hasConfirmedNavigationRef`를 `false`로 설정합니다.
+   */
+  const callHandleRefineRequest = () => {
+    handleRefineAnalysisRequest({
+      currentOperationIdRef,
+      userFeedback,
+      analysisResult,
+      eventSourceRef,
+      setError,
+      setAnalysisResult,
+      setIsRefining,
+      setIsLoading,
+      // setHasConfirmedNavigation: (confirmed: boolean) => { hasConfirmedNavigationRef.current = confirmed; }, // AnalysisPage에서 관리
+    });
+    hasConfirmedNavigationRef.current = false;
   };
 
   return (
@@ -384,7 +241,7 @@ export default function AnalysisPage() {
       </div>
 
       <div className="w-full max-w-2xl p-4 mt-8">
-        <ResumeAnalysisForm isLoading={isLoading} onSubmit={handleSubmit} />
+        <ResumeAnalysisForm isLoading={isLoading} onSubmit={handleFormSubmit} />
 
         {isLoading && !analysisResult && ( 
           <div className="mt-12 text-center flex flex-col items-center">
@@ -411,7 +268,7 @@ export default function AnalysisPage() {
                 isLoading={isLoading}
                 userFeedback={userFeedback}
                 onFeedbackChange={handleFeedbackChange}
-                onRefineRequest={handleRefineRequest}
+                onRefineRequest={callHandleRefineRequest}
               />
             )}
           </>

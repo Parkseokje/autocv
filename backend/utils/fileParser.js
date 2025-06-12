@@ -1,5 +1,6 @@
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
+const logger = require("./logger");
 
 async function parseResumeFile(file) {
   if (!file || !file.buffer || !file.mimetype) {

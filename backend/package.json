@@ -23,6 +23,7 @@
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.44.2",
     "express": "^5.1.0",
+    "loglevel": "^1.9.2",
     "mammoth": "^1.9.1",
     "markdown-pdf": "^11.0.0",
     "marked": "^15.0.12",

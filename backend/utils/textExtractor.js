@@ -1,5 +1,6 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
+const logger = require("./logger");
 
 // URL에서 텍스트를 가져오는 함수
 async function fetchAndExtractTextFromUrl(url) {
@@ -16,13 +17,13 @@ async function fetchAndExtractTextFromUrl(url) {
     ).remove();
     let text = $("body").text();
     text = text.replace(/\s\s+/g, " ").trim();
-    console.log(
+    logger.info(
       `Extracted text from ${url} (first 200 chars):`,
       text.substring(0, 200)
     );
     return text;
   } catch (error) {
-    console.error(
+    logger.error(
       `Error fetching or extracting text from URL ${url}:`,
       error.message
     );

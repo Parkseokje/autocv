@@ -6,21 +6,22 @@ const { resumesTable } = require("../db/schema");
 const { eq } = require("drizzle-orm");
 const fs = require("fs");
 const path = require("path");
+const logger = require("../utils/logger");
 
 const aiService = require("../services/aiService");
 const pdfService = require("../services/pdfService");
 
 const cancelOperation = (req, res) => {
-  console.log(`[Controller] cancelOperation 호출됨. Request body:`, req.body); // 컨트롤러 진입 로그
+  logger.info(`[Controller] cancelOperation 호출됨. Request body:`, req.body); // 컨트롤러 진입 로그
   const { operationId } = req.body;
   if (!operationId) {
-    console.warn("[Controller] cancelOperation: operationId가 요청 body에 없습니다.");
+    logger.warn("[Controller] cancelOperation: operationId가 요청 body에 없습니다.");
     return res
       .status(400)
       .json({ message: "operationId가 필요합니다.", success: false });
   }
   const result = aiService.cancelOperationById(operationId);
-  console.log(
+  logger.info(
     `[Controller] cancelOperation: aiService.cancelOperationById 결과:`,
     result
   );
@@ -39,11 +40,11 @@ const initiateAnalysis = async (req, res) => {
   if (req.body && req.body.encodedFileName) {
     try {
       clientFileName = decodeURIComponent(req.body.encodedFileName);
-      console.log(
+      logger.info(
         `[Controller] initiateAnalysis: Decoded clientFileName: ${clientFileName}`
       );
     } catch (e) {
-      console.warn(
+      logger.warn(
         "Error decoding fileName from client (initiateAnalysis):",
         e,
         "Original encodedFileName:",
@@ -51,7 +52,7 @@ const initiateAnalysis = async (req, res) => {
       );
     }
   } else {
-    console.log(
+    logger.info(
       `[Controller] initiateAnalysis: Using originalname: ${clientFileName}`
     );
   }
@@ -77,9 +78,9 @@ const initiateAnalysis = async (req, res) => {
         status: "initiated",
         userId: null
       });
-      console.log(`[${operationId}] 초기 분석 정보 DB 저장됨.`);
+      logger.info(`[${operationId}] 초기 분석 정보 DB 저장됨.`);
     } catch (dbError) {
-      console.error(`[${operationId}] 초기 분석 정보 DB 저장 중 오류:`, dbError);
+      logger.error(`[${operationId}] 초기 분석 정보 DB 저장 중 오류:`, dbError);
     }
 
     res.status(200).json({
@@ -88,7 +89,7 @@ const initiateAnalysis = async (req, res) => {
       fileName: clientFileName
     });
   } catch (error) {
-    console.error(`Error in initiateAnalysis controller:`, error);
+    logger.error(`Error in initiateAnalysis controller:`, error);
     if (error.unsupportedFileType || error.emptyExtraction) {
       return res.status(400).json({
         error: error.message,
@@ -102,7 +103,7 @@ const initiateAnalysis = async (req, res) => {
 
 const streamAnalysisEvents = async (req, res) => {
   const { operationId } = req.query;
-  console.log(
+  logger.info(
     `[Controller] streamAnalysisEvents 호출됨. Operation ID: ${operationId}`
   ); // 컨트롤러 진입 로그
 
@@ -120,7 +121,7 @@ const streamAnalysisEvents = async (req, res) => {
   try {
     await aiService.handleAnalysisSSE(req, res, operationId);
   } catch (serviceError) {
-    console.error(
+    logger.error(
       `[${operationId}] streamAnalysisEvents: handleAnalysisSSE 호출 중 예외 발생:`,
       serviceError
     );
@@ -132,7 +133,7 @@ const streamAnalysisEvents = async (req, res) => {
           })}\n\n`
         );
       } catch (e) {
-        console.error("Error writing final error to SSE stream:", e);
+        logger.error("Error writing final error to SSE stream:", e);
       }
       res.end();
     }
@@ -150,7 +151,7 @@ const refineResume = async (req, res) => {
   const { operationId, section, userInput, previousMarkdown } = req.body; // previousMarkdown 추가
 
   if (!operationId || !section || !userInput) {
-    console.warn(
+    logger.warn(
       "[Controller] refineResume: 필수 파라미터 누락 (operationId, section, userInput). Body:",
       req.body
     );
@@ -160,7 +161,7 @@ const refineResume = async (req, res) => {
     });
   }
 
-  console.log(
+  logger.info(
     `[Controller] refineResume 호출됨. Operation ID: ${operationId}, Section: ${section}, PreviousMarkdown Exists: ${!!previousMarkdown}`
   );
 
@@ -171,7 +172,7 @@ const refineResume = async (req, res) => {
       userInput,
       previousMarkdown // previousMarkdown 전달
     );
-    console.log(
+    logger.info(
       `[Controller] refineResume: aiService.prepareForRefinement 결과:`,
       result
     );
@@ -180,7 +181,7 @@ const refineResume = async (req, res) => {
       message: result.message
     });
   } catch (error) {
-    console.error(
+    logger.error(
       `[Controller] refineResume (${operationId}): aiService.prepareForRefinement 호출 중 예외 발생:`,
       error
     );
@@ -207,18 +208,18 @@ const downloadPdf = async (req, res) => {
     fileStream.pipe(res);
     fileStream.on("end", () => {
       fs.unlink(tempPdfPath, unlinkErr => {
-        if (unlinkErr) console.error("임시 PDF 파일 삭제 중 오류 (컨트롤러):", unlinkErr);
-        else console.log("임시 PDF 파일 삭제 완료 (컨트롤러):", tempPdfPath);
+        if (unlinkErr) logger.error("임시 PDF 파일 삭제 중 오류 (컨트롤러):", unlinkErr);
+        else logger.info("임시 PDF 파일 삭제 완료 (컨트롤러):", tempPdfPath);
       });
     });
     fileStream.on("error", streamErr => {
-      console.error("PDF 파일 스트리밍 중 오류 (컨트롤러):", streamErr);
+      logger.error("PDF 파일 스트리밍 중 오류 (컨트롤러):", streamErr);
       if (!res.headersSent)
         res.status(500).json({ error: "PDF 파일 전송 중 오류가 발생했습니다." });
       fs.unlink(tempPdfPath, () => {});
     });
   } catch (error) {
-    console.error("PDF 변환/전송 중 오류 (컨트롤러):", error);
+    logger.error("PDF 변환/전송 중 오류 (컨트롤러):", error);
     if (!res.headersSent)
       res
         .status(500)
