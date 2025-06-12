@@ -219,6 +219,7 @@ export default function AnalysisPage() {
       setIsLoading,
       // setHasConfirmedNavigation: (confirmed: boolean) => { hasConfirmedNavigationRef.current = confirmed; }, // AnalysisPage에서 관리
     });
+    setUserFeedback(""); // 피드백 입력란 초기화
     hasConfirmedNavigationRef.current = false;
   };
 
@@ -258,22 +259,18 @@ export default function AnalysisPage() {
           </div>
         )}
 
-        {/* analysisResult가 존재하면 AnalysisResultDisplay와 FeedbackForm을 렌더링 */}
-        {analysisResult && (
+        {/* analysisResult가 존재하고 로딩 중이 아닐 때 AnalysisResultDisplay와 FeedbackForm을 렌더링 */}
+        {analysisResult && !isLoading && (
           <>
             <AnalysisResultDisplay analysisResult={analysisResult} fileName={fileName} />
-            {/* FeedbackForm은 로딩이 아닐 때만 표시 */}
-            {!isLoading && (
-              <FeedbackForm
+            <FeedbackForm
                 isLoading={isLoading}
                 userFeedback={userFeedback}
                 onFeedbackChange={handleFeedbackChange}
                 onRefineRequest={callHandleRefineRequest}
-              />
-            )}
+            />
           </>
         )}
-        {/* "분석 결과 (실시간)" 섹션은 사용자 요청에 따라 제거되었습니다. */}
       </div>
     </div>
   );

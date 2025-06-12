@@ -60,6 +60,7 @@ async function analyzeResumeWithVertexAIStream(
     JSON 객체는 스트림의 마지막에 완전한 형태로 제공되어야 하며, 유효한 JSON 형식이어야 합니다.
     모든 문자열 값 내부에서 줄바꿈이 필요한 경우 반드시 \\n 문자를 사용해야 하며, 문자열 내부에 사용되는 모든 따옴표는 \\"와 같이 이스케이프 처리되어야 합니다.
     요청된 모든 필드(summary, skills, strengths, improvementSuggestions, suggestedResumeMarkdown)는 반드시 JSON 객체 내에 포함되어야 합니다.
+    마크다운 텍스트를 굵게 표시할 때는 별표 두 개(**)로 텍스트를 감싸주세요 (예: **중요한 내용**). 별표 문자 자체를 불필요하게 백슬래시(\)로 이스케이프 처리하지 마십시오 (예: \\*\\*잘못된 형식\\*\\*).
   `;
 
   if (
