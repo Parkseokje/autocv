@@ -257,9 +257,17 @@ async function parseAndFinalizeAnalysis(fullResponseText, res, operationId) { //
      return; 
   }
   
+  // 조건문 진입 전 상태 로깅
+  console.log(`[${operationId}] AI 서비스: Pre-DB update check. finalAnalysisData is ${finalAnalysisData ? 'defined' : 'undefined/null'}. res.writableEnded is ${res.writableEnded}.`);
+
   if (finalAnalysisData && !res.writableEnded) {
     // DB에 generatedMarkdown 업데이트 시도
-    if (finalAnalysisData.suggestedResumeMarkdown && operationId) {
+    console.log(`[${operationId}] AI 서비스: DB 업데이트 조건 확인용 finalAnalysisData.suggestedResumeMarkdown 타입: ${typeof finalAnalysisData.suggestedResumeMarkdown}, 길이: ${finalAnalysisData.suggestedResumeMarkdown?.length}, 내용 (앞 50자): ${finalAnalysisData.suggestedResumeMarkdown?.substring(0,50)}`);
+    console.log(`[${operationId}] AI 서비스: DB 업데이트 조건 확인용 operationId: ${operationId}`);
+    // console.log(`[${operationId}] AI 서비스: 전체 finalAnalysisData 객체:`, JSON.stringify(finalAnalysisData, null, 2)); // 전체 객체 로깅 (필요시 주석 해제)
+
+    if (finalAnalysisData.suggestedResumeMarkdown && typeof finalAnalysisData.suggestedResumeMarkdown === 'string' && finalAnalysisData.suggestedResumeMarkdown.trim() !== "" && operationId) {
+      console.log(`[${operationId}] AI 서비스: DB 업데이트 시도 중... Markdown 길이: ${finalAnalysisData.suggestedResumeMarkdown.length}`);
       try {
         await db.update(resumesTable) // await 사용
           .set({ 
@@ -340,7 +348,7 @@ async function handleAnalysisSSE(req, res, operationId) {
       return; 
     }
     
-    parseAndFinalizeAnalysis(fullResponseText, res, operationId);
+    await parseAndFinalizeAnalysis(fullResponseText, res, operationId); // await 추가
 
   } catch (error) { 
     console.error(`[${operationId}] AI 서비스: handleAnalysisSSE에서 예기치 않은 오류 발생:`, error);
@@ -381,45 +389,8 @@ async function handleAnalysisSSE(req, res, operationId) {
   }
 }
 
-// parseAndFinalizeAnalysis 함수 수정: 스트림 완료 후 refinementDetails 초기화
-function parseAndFinalizeAnalysis(fullResponseText, res, operationId) {
-  // AI가 생성한 전체 응답 텍스트 로깅
-  console.log(`[${operationId}] AI 서비스: Vertex AI fullResponseText (before regex):\n---\n${fullResponseText}\n---`);
-
-  const jsonRegex = /```json\s*([\s\S]*?)\s*```/;
-  const match = fullResponseText.match(jsonRegex);
-  let finalAnalysisData;
-
-  if (match && match[1]) {
-    const extractedJsonString = match[1];
-    // 추출된 JSON 문자열 로깅
-    console.log(`[${operationId}] AI 서비스: Extracted JSON string for parsing:\n---\n${extractedJsonString}\n---`);
-    try {
-      finalAnalysisData = JSON.parse(extractedJsonString);
-    } catch (parseError) {
-      console.error(`[${operationId}] AI 서비스: 최종 JSON 파싱 오류 (parseAndFinalizeAnalysis):`, parseError);
-      const problematicSubstring = extractedJsonString.substring(0, 200); 
-      if (!res.writableEnded) res.write(`event: error\ndata: ${JSON.stringify({ error: `AI 응답 최종 처리 중 오류 발생 (JSON 파싱 실패). Problematic string (approx. first 200 chars): ${problematicSubstring}`, details: parseError.message })}\n\n`);
-      return; 
-    }
-  } else {
-     console.warn(`[${operationId}] AI 서비스: Vertex AI 최종 응답에서 JSON 코드 블록을 찾지 못했습니다 (parseAndFinalizeAnalysis). fullResponseText 길이: ${fullResponseText.length}`);
-     if (!res.writableEnded) res.write(`event: error\ndata: ${JSON.stringify({ error: "AI 응답에서 최종 분석 결과를 추출하지 못했습니다.", rawResponsePreview: fullResponseText.substring(0, 500) })}\n\n`);
-     return; 
-  }
-  
-  if (finalAnalysisData && !res.writableEnded) {
-      res.write(`event: complete\ndata: ${JSON.stringify({ analysis: finalAnalysisData, operationId: operationId })}\n\n`);
-      // 성공적으로 complete 이벤트 전송 후 refinementDetails 초기화
-      const connection = activeConnections.get(operationId);
-      if (connection) {
-        connection.refinementDetails = null;
-        activeConnections.set(operationId, connection);
-        console.log(`[${operationId}] AI 서비스: refinementDetails 초기화 완료 (parseAndFinalizeAnalysis).`);
-      }
-  }
-}
-
+// 해당 동기 버전의 parseAndFinalizeAnalysis 함수 정의가 이 위치에 있었다면 삭제됩니다.
+// async 버전의 parseAndFinalizeAnalysis 함수는 파일 상단에 이미 정의되어 있어야 합니다.
 
 module.exports = {
   initiateAnalysisOperation,
